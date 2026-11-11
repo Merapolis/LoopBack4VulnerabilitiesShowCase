@@ -1,0 +1,31 @@
+{
+  "name": "lb4-oracle-lab",
+  "version": "0.1.0",
+  "description": "Minimal LoopBack 4 application skeleton",
+  "main": "dist/application.js",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "pretest": "npm run build",
+    "test": "node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@loopback/core": "7.0.15",
+    "@loopback/rest": "16.0.0",
+    "@loopback/repository": "9.0.0",
+    "reflect-metadata": "0.2.2",
+    "tslib": "2.9.1"
+  },
+  "overrides": {
+    "undici": "6.29.1",
+    "@fastify/busboy": "3.2.2",
+    "minimatch": "11.0.1",
+    "uuid": "11.1.1"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "@types/node": "22.20.5"
+  }
+}
