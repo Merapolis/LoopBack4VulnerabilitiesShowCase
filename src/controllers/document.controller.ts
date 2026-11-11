@@ -49,9 +49,13 @@ export class DocumentController {
     @param.header.string('X-Demo-User') demoUser?: string,
   ): Promise<Document> {
     const user = this.validateDemoUser(demoUser);
-    const doc = await this.documentRepository.findById(id);
-    if (doc.visibility === 'public') return doc;
-    if (user && doc.ownerId === user && doc.visibility === 'private') {
+    // Use findOne so a missing record yields null instead of a repository
+    // ENTITY_NOT_FOUND error, whose message would reveal (through a
+    // different body) whether an id exists. Both the nonexistent and the
+    // inaccessible case must produce the identical 404 below.
+    const doc = await this.documentRepository.findOne({where: {id}});
+    if (doc && doc.visibility === 'public') return doc;
+    if (doc && user && doc.ownerId === user && doc.visibility === 'private') {
       return doc;
     }
     // Not found or not accessible – respond with 404.

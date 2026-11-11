@@ -2,12 +2,13 @@
   "name": "lb4-oracle-lab",
   "version": "0.1.0",
   "description": "Minimal LoopBack 4 application skeleton",
-  "main": "dist/application.js",
+  "main": "dist/src/application.js",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "build": "tsc",
+    "start": "node dist/src/application.js",
     "pretest": "npm run build",
     "test": "node --test \"dist/**/*.test.js\""
   },

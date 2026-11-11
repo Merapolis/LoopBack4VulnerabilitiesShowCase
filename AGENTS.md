@@ -94,3 +94,30 @@ Before calling the baseline complete:
 - npm install produces no ERESOLVE warnings.
 - npm audit and npm audit --omit=dev report zero unintended findings.
 - A fresh `rm -rf node_modules && npm ci` still builds and tests successfully.
+## Phase decisions (append-only log)
+
+These notes record implementation decisions made while building the lab. They
+supplement, and do not replace, the rules above.
+
+- `useDefineForClassFields: false` in tsconfig.json is intentional. LoopBack
+  entity models rely on property decorators and juggler assigning values onto
+  instances; ES2022 class-field semantics (`useDefineForClassFields: true`)
+  would re-initialize declared fields and clobber the data juggler assigns
+  before validation. Do not remove this flag.
+- Generated ids must not be supplied in create payloads. The `Document` model
+  marks `id` with `generated: true`; the connector (memory connector) assigns
+  ids at creation time, and juggler rejects explicit ids in `create()` with
+  `` `id` can't be set ``. Seed data and tests must never pass `id` to
+  `create()`.
+- Tests must not depend on memory-generated ids (no hardcoded `2`/`3`
+  fixtures) unless the test is specifically about id generation. Locate
+  fixtures by stable attributes such as title/owner, or capture the
+  connector-generated id from created/listed records.
+- Compiled entrypoint and layout: tsconfig.json compiles both `src/` and
+  `test/` (no `rootDir`) into `dist/`, so the actual layout is
+  `dist/src/...` (application) and `dist/test/...` (compiled tests). The
+  runtime entrypoint is `dist/src/application.js`; `package.json` `main` and
+  the `npm start` script point there. `npm test` runs `node --test
+  "dist/**/*.test.js"`.
+- Stale compiled artifacts must never be committed into `src/` or `test/`;
+  build output belongs under `dist/` only (see .gitignore).

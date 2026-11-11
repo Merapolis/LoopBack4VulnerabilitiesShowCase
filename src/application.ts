@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import {RestApplication, RestServerConfig} from '@loopback/rest';
+import {RestApplication} from '@loopback/rest';
 import {ApplicationConfig} from '@loopback/core';
 import {HealthController} from './controllers/health.controller';
 import {DbDataSource} from './datasources/db.datasource';
@@ -8,13 +8,19 @@ import {DocumentController} from './controllers/document.controller';
 
 export class App extends RestApplication {
   constructor(options: ApplicationConfig = {}) {
-    super(options);
-    // Configure the server to bind to 127.0.0.1:3000
-    const config: RestServerConfig = {
-      host: '127.0.0.1',
-      port: 3000,
-    };
-    this.configure('rest').to(config);
+    // Bind to the loopback interface only. RestServer resolves its config
+    // from the `rest` key of the application options (a `configure('rest')`
+    // binding is NOT honored), so the default host/port must be merged into
+    // the options here. Callers may still override via `options.rest`
+    // (e.g. tests use an ephemeral port 0).
+    super({
+      ...options,
+      rest: {
+        host: '127.0.0.1',
+        port: 3000,
+        ...options.rest,
+      },
+    });
     // Register health controller
     this.controller(HealthController);
     // Register datasource, repository and document controller explicitly

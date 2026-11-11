@@ -25,6 +25,11 @@ before(async () => {
   if (!baseUrlFromBinding) {
     throw new Error('Base URL not available');
   }
+  // Guard the baseline rule: the server must bind to the loopback interface
+  // only, never to all interfaces.
+  if (!baseUrlFromBinding.startsWith('http://127.0.0.1:')) {
+    throw new Error(`Server is not loopback-only: ${baseUrlFromBinding}`);
+  }
   baseUrl = baseUrlFromBinding;
 });
 
