@@ -5,6 +5,7 @@
     "outDir": "dist",
     "strict": true,
     "esModuleInterop": true,
+    "useDefineForClassFields": false,
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "skipLibCheck": true,
