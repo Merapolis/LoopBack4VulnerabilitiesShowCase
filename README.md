@@ -76,11 +76,136 @@ real records of any kind.
   the same status code, body, and error message. The baseline does not leak
   the existence of documents the actor may not access.
 
+## Deliberately vulnerable profile field-authorization demo (this branch only)
+
+> **Branch `demo/profile-field-authorization` only.** The endpoints below are
+> **intentionally vulnerable** and exist solely on this educational branch.
+> The `secure-baseline` tag does not contain them.
+
+### The synthetic profiles
+
+A dedicated `DemoProfile` model (separate from documents) is seeded with two
+fictional profiles:
+
+| username | email               | displayName | isAdmin |
+|----------|---------------------|-------------|---------|
+| alice    | alice@example.test  | Alice       | false   |
+| bob      | bob@example.test    | Bob         | false   |
+
+`isAdmin` is an **ordinary persisted boolean property** — it is **not** marked
+`hidden: true`. It is only omitted from the normal profile response by a
+server-side field projection.
+
+### Endpoints
+
+```text
+GET   /demo/profile    current actor's own profile (X-Demo-User required)
+PATCH /demo/profile    current actor's self-profile update
+GET   /demo/admin      admin-only proof endpoint
+```
+
+`X-Demo-User: alice | bob` is required on all three and is only a **synthetic
+fixture identity selector, NOT authentication**. The actor is always taken
+from that header and never from a body, query, or path parameter.
+
+### 1. Normal public profile
+
+```fish
+curl -s -H 'X-Demo-User: bob' http://127.0.0.1:3000/demo/profile
+# -> {"username":"bob","email":"bob@example.test","displayName":"Bob"}
+```
+
+Without a filter, a server-selected projection returns exactly `username`,
+`email`, and `displayName`; `isAdmin` is absent.
+
+### 2. Negative projection discloses `isAdmin`
+
+```fish
+curl -s -H 'X-Demo-User: bob' \
+  'http://127.0.0.1:3000/demo/profile?filter={"fields":{"displayName":false}}'
+# -> {"username":"bob","email":"bob@example.test","isAdmin":false}
+```
+
+The `fields:{"displayName":false}` selection means "return the other
+repository properties excluding `displayName`". It is a negative **field
+projection**, not an `includeHidden` switch: `isAdmin` is included simply
+because it is an ordinary model property that the exclusion did not remove.
+The caller-controlled projection **replaces** the normal public projection
+rather than being merged with it.
+
+### 3. Initial admin denial
+
+```fish
+curl -s -H 'X-Demo-User: bob' http://127.0.0.1:3000/demo/admin
+# -> 403 {"error":{"statusCode":403,"name":"ForbiddenError","message":"Admin access required"}}
+```
+
+### 4. Ordinary profile edit
+
+```fish
+curl -s -X PATCH -H 'X-Demo-User: bob' -H 'Content-Type: application/json' \
+  -d '{"email":"bob.updated@example.test","displayName":"Bobby"}' \
+  http://127.0.0.1:3000/demo/profile
+```
+
+The update response uses the public projection and does **not** disclose
+`isAdmin`. Bob remains non-admin.
+
+### 5. Mass-assignment request containing `isAdmin:true`
+
+```fish
+curl -s -X PATCH -H 'X-Demo-User: bob' -H 'Content-Type: application/json' \
+  -d '{"isAdmin":true}' http://127.0.0.1:3000/demo/profile
+# -> 200 {"username":"bob","email":"bob.updated@example.test","displayName":"Bobby"}
+```
+
+The model-shaped update body accepts `isAdmin` and persists it through the
+ordinary `updateById` path. The response still hides `isAdmin`, so the change
+is invisible in the edit response.
+
+### 6. Subsequent privileged response
+
+```fish
+curl -s -H 'X-Demo-User: bob' http://127.0.0.1:3000/demo/admin
+# -> 200 {"scope":"admin","report":"Synthetic admin-only report"}
+```
+
+The admin endpoint loads the persisted profile on every request and authorize
+only when the stored `isAdmin` is exactly `true`. It never trusts `isAdmin`
+from a body, query, or extra header, and never caches the decision.
+
+### Why this is vulnerable
+
+- **Reading `isAdmin`** (case 2) is an **information disclosure** caused by
+  passing a client-controlled projection to the repository while exposing the
+  complete persistence model as the read contract. Repository projection and
+  response serialization are separate concerns: the leak is a projection
+  result, not a `hidden`-property serialization bypass.
+- **The mass-assignment update** (case 5) causes the actual **privilege
+  escalation** by accepting a security-sensitive role attribute through an
+  ordinary self-profile update.
+- The shared root mistake is using the **complete persistence model as both
+  the read and write API contract**, without operation-specific DTOs or
+  field-level authorization.
+
+**Secure remediation:** use distinct output DTOs (or a server-enforced
+response allowlist) for reads, and a dedicated profile-update DTO that
+assigns only `email`/`displayName`. Sensitive role changes belong in a
+separate, privileged operation that never shares the ordinary self-profile
+update shape.
+
+This is deliberately vulnerable **application** code — not a claimed
+LoopBack core vulnerability. The `X-Demo-User` header is not authentication
+and all seeded data is synthetic with no production significance.
+
 ## Scope notes
 
 - The intentional **oracle vulnerability demonstration is NOT part of this
   baseline**. It will be introduced later as an explicitly isolated branch or
   change; do not expect it here.
+- This working copy is on the intentionally vulnerable
+  `demo/profile-field-authorization` branch built for a security article; the
+  `secure-baseline` tag does not contain the profile demo.
 - This is a **local test application, not a production template**: the
   in-memory datasource resets on restart, `X-Demo-User` is not authentication,
   and the server binds only to 127.0.0.1.

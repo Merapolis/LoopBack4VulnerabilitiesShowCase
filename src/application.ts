@@ -5,6 +5,8 @@ import {HealthController} from './controllers/health.controller';
 import {DbDataSource} from './datasources/db.datasource';
 import {DocumentRepository} from './repositories/document.repository';
 import {DocumentController} from './controllers/document.controller';
+import {DemoProfileRepository} from './repositories/demo-profile.repository';
+import {DemoProfileController} from './controllers/demo-profile.controller';
 
 export class App extends RestApplication {
   constructor(options: ApplicationConfig = {}) {
@@ -27,6 +29,11 @@ export class App extends RestApplication {
     this.bind('datasources.db').to(new DbDataSource());
     this.bind('repositories.DocumentRepository').toClass(DocumentRepository);
     this.controller(DocumentController);
+    // Deliberately vulnerable profile demo (branch demo/profile-field-authorization).
+    this.bind('repositories.DemoProfileRepository').toClass(
+      DemoProfileRepository,
+    );
+    this.controller(DemoProfileController);
   }
 
   // Seed deterministic synthetic documents (idempotent)
@@ -56,9 +63,32 @@ export class App extends RestApplication {
     }
   }
 
+  // Seed deterministic synthetic profiles (independent and idempotent).
+  private async seedProfiles(): Promise<void> {
+    const repo = await this.get<DemoProfileRepository>(
+      'repositories.DemoProfileRepository',
+    );
+    const cnt = (await repo.count()).count;
+    if (cnt === 0) {
+      await repo.create({
+        username: 'alice',
+        email: 'alice@example.test',
+        displayName: 'Alice',
+        isAdmin: false,
+      });
+      await repo.create({
+        username: 'bob',
+        email: 'bob@example.test',
+        displayName: 'Bob',
+        isAdmin: false,
+      });
+    }
+  }
+
   async start(): Promise<void> {
     await super.start();
     await this.seedDocuments();
+    await this.seedProfiles();
   }
 }
 

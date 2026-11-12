@@ -121,3 +121,24 @@ supplement, and do not replace, the rules above.
   "dist/**/*.test.js"`.
 - Stale compiled artifacts must never be committed into `src/` or `test/`;
   build output belongs under `dist/` only (see .gitignore).
+
+## Demo branch decision (demo/profile-field-authorization)
+
+- Two lines in `DemoProfileController` (`src/controllers/demo-profile.controller.ts`)
+  are **intentionally vulnerable and must not be repaired during routine
+  cleanup** on this branch:
+  1. In `getProfile`, when a caller-supplied `fields` projection is present it
+     is passed straight to `findOne` in place of the server-selected public
+     projection (no merge, no allowlist). An exclusion selector such as
+     `{"displayName":false}` therefore reveals the ordinary `isAdmin` property.
+  2. In `updateProfile`, `isAdmin` is a recognized mutable property, so a body
+     of `{"isAdmin":true}` mass-assigns the privilege bit through the ordinary
+     `updateById` self-update.
+  `isAdmin` must remain an ordinary persisted property — do NOT mark it
+  `hidden`, `protected`, `readonly`, or `immutable`, do NOT add operation-
+  specific DTOs/allowlists that strip it, do NOT force it back to false, and
+  do NOT fail closed on the read projection. Those changes would remove the
+  demonstration; the secure refactor belongs to a future, explicitly marked
+  change. `GET /demo/admin` must keep authorizing on the persisted
+  `isAdmin === true` value read fresh on every request (never cached, never
+  taken from input).
