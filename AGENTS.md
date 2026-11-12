@@ -121,3 +121,28 @@ supplement, and do not replace, the rules above.
   "dist/**/*.test.js"`.
 - Stale compiled artifacts must never be committed into `src/` or `test/`;
   build output belongs under `dist/` only (see .gitignore).
+
+## Demo branch decision (demo/wildcard-oracle)
+
+- The `{like: suppliedPattern}` filter in `DemoController.resolveIdentity`
+  (`src/controllers/demo.controller.ts`) is **intentionally vulnerable and
+  must not be removed during routine cleanup** on this branch. It passes an
+  attacker-controlled wildcard pattern (`%`, `_`) into the memory connector's
+  LIKE matching against the stored `accessId`, and the ownership decision is
+  deliberately made only after the lookup, producing the differential
+  403-vs-404 access-ID oracle this educational branch exists to demonstrate.
+  It is present **only** in the resolver; the protected document route
+  (`GET /demo/users/{ownerId}/documents`) must keep its exact-equality
+  credential check. The secure refactor (exact matching on secrets, or
+  deciding ownership before responding) belongs to a future, explicitly
+  marked change — not to routine maintenance.
+- The seeded access IDs (`alice → BLOG`, `bob → SAFE`) are fixed educational
+  fixtures, four uppercase letters without repeats; they are synthetic test
+  values, not credentials, and `accessId` is marked `hidden` on the model so
+  serialization never exposes it.
+
+- The landing page at `GET /` (`src/controllers/landing.controller.ts`,
+  `LandingController`) is demo-branch presentation only: it calls the same HTTP
+  endpoints a manual tester would, holds no secrets (tests assert the page
+  never contains BLOG/SAFE), and must not grow business logic, authentication,
+  or extra routes.

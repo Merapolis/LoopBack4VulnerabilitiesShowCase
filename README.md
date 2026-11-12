@@ -76,11 +76,87 @@ real records of any kind.
   the same status code, body, and error message. The baseline does not leak
   the existence of documents the actor may not access.
 
+## Deliberately vulnerable demo workflow (this branch only)
+
+> **Branch `demo/wildcard-oracle` only.** The workflow below exists solely on
+> the deliberately vulnerable educational branch of this repository. The
+> `secure-baseline` branch/tag does not contain it.
+
+This branch adds a synthetic per-user **access ID** (an API-access
+abstraction — *not* a login, session, password, or user-management system).
+Seeded fixtures: `alice → BLOG`, `bob → SAFE` (four uppercase letters, no
+repeats). The access IDs are synthetic and appear in fixture source only to
+make reproducible testing possible; they are not production credentials.
+
+### Endpoint 1 — vulnerable identity resolver
+
+```fish
+curl -s -X POST -H "X-Demo-User: bob" -H "Content-Type: application/json" \
+  -d '{"ownerId":"alice","accessId":"BL%"}' \
+  http://127.0.0.1:3000/demo/identities/resolve
+```
+
+The resolver matches the supplied `accessId` against the stored secret using
+the memory connector's `like` wildcard semantics (`%` = any run of
+characters, `_` = exactly one character), and only decides ownership *after*
+the lookup. The response matrix is the oracle:
+
+| Condition | Response |
+|---|---|
+| No identity matches the pattern for the requested owner | `404` `Identity not found` |
+| An identity matches, but the caller fixture actor is not its owner | `403` `Access denied` |
+| An identity matches and the caller is its owner | `200` `{"ownerId":"..."}` |
+
+Short example: `A%` → 404, `B%` → 403, `BL%` → 403. Because `403` means
+"pattern matched the secret" and `404` means "it did not", an attacker can
+reconstruct the secret character by character without ever seeing it.
+
+`X-Demo-User` is only a fixture-actor selector, **not authentication**. No
+resolver response (including 403s) ever contains the access ID itself.
+
+### Endpoint 2 — exact-ID protected document access
+
+Once the exact access ID has been reconstructed (e.g. `BLOG`), it becomes the
+sole credential for the protected demonstration document endpoint:
+
+```fish
+curl -s -H "X-Access-Id: BLOG" http://127.0.0.1:3000/demo/users/alice/documents
+```
+
+This route performs an **exact equality** check only (`ownerId` + the header
+value). It does not read `X-Demo-User` and has no anonymous fallback. On an
+exact match it returns all documents owned by that user — including private
+ones such as `Alice Private` with its protected content. Wildcards (`%`,
+`_`), partial prefixes, and lowercase variants fail here: only the exact
+possession of the access ID grants access.
+
+### Interactive demo UI
+
+Open <http://127.0.0.1:3000/> for a click-through demo page: pick the alice/bob
+fixture identity with a button, fire the resolver cases, watch the 403/404
+signal build up in a request log, paste the reconstructed access ID into the
+protected endpoint, and copy the equivalent curl command for every request.
+It is plain same-origin HTTP traffic — point your browser at a Burp Suite
+proxy to intercept, inspect, and replay any of it.
+
+### Why this is vulnerable
+
+The vulnerability is this application's **combination** of (1) wildcard
+matching applied to a secret, (2) an authorization decision made after the
+match, and (3) differential 403/404 responses. It is **not** a claim that
+wildcard/LIKE support is inherently unsafe — the same connector wildcard
+behavior is harmless in the exact-title document search of the secure
+baseline, where it is not applied to secrets and does not produce a
+differential disclosure signal.
+
 ## Scope notes
 
-- The intentional **oracle vulnerability demonstration is NOT part of this
-  baseline**. It will be introduced later as an explicitly isolated branch or
-  change; do not expect it here.
+- The **`secure-baseline` tag does not contain the oracle demonstration**;
+  this working copy is on the intentionally vulnerable `demo/wildcard-oracle`
+  branch built for a security article.
+- The `secure-baseline` tag contains the secure application without the demo
+  workflow; the oracle demonstration lives only on the `demo/wildcard-oracle`
+  branch, which is intentionally vulnerable for a security article.
 - This is a **local test application, not a production template**: the
   in-memory datasource resets on restart, `X-Demo-User` is not authentication,
   and the server binds only to 127.0.0.1.
