@@ -5,6 +5,9 @@ import {HealthController} from './controllers/health.controller';
 import {DbDataSource} from './datasources/db.datasource';
 import {DocumentRepository} from './repositories/document.repository';
 import {DocumentController} from './controllers/document.controller';
+import {ProtectedValue} from './models/protected-value.model';
+import {ProtectedValueRepository} from './repositories/protected-value.repository';
+import {ProtectedValueController} from './controllers/protected-value.controller';
 
 export class App extends RestApplication {
   constructor(options: ApplicationConfig = {}) {
@@ -27,6 +30,11 @@ export class App extends RestApplication {
     this.bind('datasources.db').to(new DbDataSource());
     this.bind('repositories.DocumentRepository').toClass(DocumentRepository);
     this.controller(DocumentController);
+    // Deliberately vulnerable projection demo (branch demo/projection-fail-open).
+    this.bind('repositories.ProtectedValueRepository').toClass(
+      ProtectedValueRepository,
+    );
+    this.controller(ProtectedValueController);
   }
 
   // Seed deterministic synthetic documents (idempotent)
@@ -56,9 +64,31 @@ export class App extends RestApplication {
     }
   }
 
+  // Seed the deterministic synthetic protected-value fixtures (independent
+  // and idempotent). All values are fictional.
+  private async seedProtectedValues(): Promise<void> {
+    const repo = await this.get<ProtectedValueRepository>(
+      'repositories.ProtectedValueRepository',
+    );
+    const cnt = (await repo.count()).count;
+    if (cnt === 0) {
+      await repo.create({
+        secretId: 'ALICE-RESOURCE-001',
+        owner: 'alice',
+        value: 'Alice secret',
+      });
+      await repo.create({
+        secretId: 'BOB-RESOURCE-001',
+        owner: 'bob',
+        value: 'Bob secret',
+      });
+    }
+  }
+
   async start(): Promise<void> {
     await super.start();
     await this.seedDocuments();
+    await this.seedProtectedValues();
   }
 }
 

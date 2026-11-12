@@ -76,11 +76,106 @@ real records of any kind.
   the same status code, body, and error message. The baseline does not leak
   the existence of documents the actor may not access.
 
+## Deliberately vulnerable projection workflow (this branch only)
+
+> **Branch `demo/projection-fail-open` only.** The endpoint below is
+> **intentionally vulnerable** and exists solely on this educational branch.
+> The `secure-baseline` tag does not contain it.
+
+### The protected resource
+
+The demo uses a dedicated `ProtectedValue` model, separate from the Document
+domain, backed by the same in-memory datasource. Synthetic fixtures (all
+fictional):
+
+| secretId            | owner  | value        |
+|---------------------|--------|--------------|
+| `ALICE-RESOURCE-001` | alice | Alice secret |
+| `BOB-RESOURCE-001`   | bob   | Bob secret   |
+
+No generic CRUD routes exist for `ProtectedValue`; its value is returned only
+through the demo endpoint below.
+
+### Endpoint contract
+
+```text
+POST /demo/protected-values/read
+X-Demo-User: alice | bob        (required fixture actor selector, NOT authentication)
+Content-Type: application/json
+
+{
+  "secretId": "ALICE-RESOURCE-001",   required, exact-match resource id
+  "fields": {"owner": true, "value": 1}  required field selection
+}
+```
+
+Prerequisites: a valid `X-Demo-User` fixture actor and the exact `secretId`
+locate the target. `fields` may contain only `owner` (optional) and `value`
+(required). Each selector accepts JSON boolean `true` or the number `1` —
+both spellings mean "include this field" in this lab; the server normalizes
+the validated selection to boolean `true` before passing it to LoopBack as
+the repository `fields` filter. No `where`, `include`, `order`, `limit`,
+`like`, regexp, or raw filter features are accepted, and unknown selectors
+(`ownerId`, `title`, `secretId`, ...) are rejected with 400.
+
+### The three central cases
+
+| Case | Body (`fields`) | Response |
+|---|---|---|
+| Normal owner | `{"owner": true, "value": 1}` as alice on her own id | **200** — projected result carries `owner: alice` and `Alice secret`; the ownership check passes |
+| Owner mismatch | `{"owner": true, "value": 1}` as bob on alice's id | **403** — the projection includes `owner`, the mismatch is detected |
+| Owner omitted | `{"value": true}` as bob on alice's id | **200** — the projected result has no `owner`, the check trusts the missing metadata, and `Alice secret` is disclosed |
+
+Fish-compatible curl commands:
+
+```fish
+# normal owner case (alice)
+curl -s -X POST -H 'X-Demo-User: alice' -H 'Content-Type: application/json' \
+  -d '{"secretId":"ALICE-RESOURCE-001","fields":{"owner":true,"value":1}}' \
+  http://127.0.0.1:3000/demo/protected-values/read
+
+# owner mismatch case (bob)
+curl -s -X POST -H 'X-Demo-User: bob' -H 'Content-Type: application/json' \
+  -d '{"secretId":"ALICE-RESOURCE-001","fields":{"owner":true,"value":1}}' \
+  http://127.0.0.1:3000/demo/protected-values/read
+
+# owner-omission attack (bob requests only the value)
+curl -s -X POST -H 'X-Demo-User: bob' -H 'Content-Type: application/json' \
+  -d '{"secretId":"ALICE-RESOURCE-001","fields":{"value":true}}' \
+  http://127.0.0.1:3000/demo/protected-values/read
+```
+
+### Why this is vulnerable
+
+The application performs its ownership check on the **client-projected
+result**: the caller controls which fields the repository query returns, so
+omitting the `owner` selector yields a valid projected JSON object with no
+ownership metadata — and the check's truthiness guard treats the absent owner
+as no mismatch. The exact resource id is necessary to locate the target, but
+it does not save the ownership check once the projected result lacks `owner`.
+The decisive manipulation is the **omission of `owner`**, not the numeric
+versus boolean spelling of a selector. The projected response is structurally
+valid JSON: the flaw is trusting projected output for an authorization
+decision — not JSON corruption, and not wildcard matching.
+
+**Secure-design note:** production code should retrieve canonical ownership
+metadata and authorize **before** projecting a response — or fail closed if
+required metadata is absent. Never let a client-controlled projection decide
+what an authorization check can see.
+
+All fixture values are synthetic; there are no real customer details or
+production credentials.
+
 ## Scope notes
 
 - The intentional **oracle vulnerability demonstration is NOT part of this
   baseline**. It will be introduced later as an explicitly isolated branch or
   change; do not expect it here.
+- The **`secure-baseline` tag does not contain the projection demonstration**;
+  this working copy is on the intentionally vulnerable
+  `demo/projection-fail-open` branch built for a security article. All seeded
+  values are fictional; there are no real customer details, credentials, or
+  claims about external systems.
 - This is a **local test application, not a production template**: the
   in-memory datasource resets on restart, `X-Demo-User` is not authentication,
   and the server binds only to 127.0.0.1.

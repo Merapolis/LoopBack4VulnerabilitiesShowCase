@@ -121,3 +121,26 @@ supplement, and do not replace, the rules above.
   "dist/**/*.test.js"`.
 - Stale compiled artifacts must never be committed into `src/` or `test/`;
   build output belongs under `dist/` only (see .gitignore).
+
+## Demo branch decision (demo/projection-fail-open)
+
+- The ownership check in `ProtectedValueController.readProtectedValue`
+  (`src/controllers/protected-value.controller.ts`) is **intentionally
+  fail-open and must not be repaired during routine cleanup** on this branch.
+  The caller posts an exact `secretId` plus a validated field selection whose
+  keys are exactly `owner` (optional) and `value` (required), each accepting
+  JSON `true` or the number `1` as inclusion selectors. The server normalizes
+  the selection to boolean `true` and passes it as the repository `fields`
+  filter, so the query result is a **client-projected** `ProtectedValue`. The
+  ownership decision is then made on that projected result with the condition
+  `if (projected.owner && projected.owner !== actor)`: when the caller omits
+  the `owner` selector, the projected result has no ownership metadata and
+  the truthiness guard treats its absence as permission, disclosing another
+  fixture user's protected value. The decisive manipulation is the omission
+  of `owner`, not the numeric-vs-boolean selector spelling (both mean
+  "include this field"). Do not add a second canonical lookup, do not
+  authorize before projecting, do not force `owner` into every result, do not
+  change the condition to `projected.owner !== actor` (fail-closed), and do
+  not add post-hoc response projection — any of those removes the
+  demonstration. The secure refactor belongs to a future, explicitly marked
+  change.
