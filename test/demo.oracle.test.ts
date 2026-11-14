@@ -68,6 +68,8 @@ async function userDocuments(
 const FORBIDDEN_IN_RESOLVER_RESPONSES: string[] = [
   ALICE_ACCESS_ID,
   BOB_ACCESS_ID,
+  'CODE',
+  'DAVE',
   'Alice Private',
   'Bob Private',
   'Alice secret',
@@ -109,68 +111,89 @@ describe('Demo landing page', async () => {
   });
 });
 
+// In this demo model the CALLER supplies the whole `where` query. The
+// application never meant to expose wildcards, but because it trusts the
+// caller-issued `where` verbatim, the caller can introduce the memory
+// connector's `like` operator (and therefore `%` / `_`) themselves.
+function likeQuery(owner: string, pattern: string): unknown {
+  return {where: {ownerId: owner, accessId: {like: pattern}}};
+}
+
 describe('Vulnerable resolver: oracle behavior', async () => {
+  it('caller supplies the like operator itself (not injected by the server)', async () => {
+    // Using `like` is entirely the caller's choice in the request body.
+    const res = await resolve('bob', likeQuery('alice', 'B%'));
+    assert.equal(res.status, 403);
+  });
+
   it('nonmatching alice pattern (A%) with bob actor returns 404', async () => {
-    const res = await resolve('bob', {ownerId: 'alice', accessId: 'A%'});
+    const res = await resolve('bob', likeQuery('alice', 'A%'));
     assert.equal(res.status, 404);
     const text = await res.text();
     assert.ok(text.includes('Identity not found'));
   });
 
   it('matching prefix B% with bob actor returns 403', async () => {
-    const res = await resolve('bob', {ownerId: 'alice', accessId: 'B%'});
+    const res = await resolve('bob', likeQuery('alice', 'B%'));
     assert.equal(res.status, 403);
     const text = await res.text();
     assert.ok(text.includes('Access denied'));
   });
 
   it('progressively matching prefix BL% returns 403', async () => {
-    const res = await resolve('bob', {ownerId: 'alice', accessId: 'BL%'});
+    const res = await resolve('bob', likeQuery('alice', 'BL%'));
     assert.equal(res.status, 403);
   });
 
   it('nonmatching continuation BA% returns 404', async () => {
-    const res = await resolve('bob', {ownerId: 'alice', accessId: 'BA%'});
+    const res = await resolve('bob', likeQuery('alice', 'BA%'));
     assert.equal(res.status, 404);
   });
 
   it('exact BLOG with bob actor still returns only 403', async () => {
-    const res = await resolve('bob', {ownerId: 'alice', accessId: 'BLOG'});
+    const res = await resolve('bob', likeQuery('alice', 'BLOG'));
     assert.equal(res.status, 403);
     const text = await res.text();
     assert.ok(!text.includes('BLOG'), 'response must not echo the access ID');
   });
 
   it('_ acts as a single-character wildcard (BL_G) producing the denied match', async () => {
-    const res = await resolve('bob', {ownerId: 'alice', accessId: 'BL_G'});
+    const res = await resolve('bob', likeQuery('alice', 'BL_G'));
     assert.equal(res.status, 403);
   });
 
   it('alice resolving her own matching identity gets only her ownerId', async () => {
-    const res = await resolve('alice', {ownerId: 'alice', accessId: 'BLOG'});
+    const res = await resolve('alice', likeQuery('alice', 'BLOG'));
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.deepEqual(body, {ownerId: 'alice'});
   });
 
   it('alice with a matching wildcard prefix also resolves her own identity', async () => {
-    const res = await resolve('alice', {ownerId: 'alice', accessId: 'BL%'});
+    const res = await resolve('alice', likeQuery('alice', 'BL%'));
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), {ownerId: 'alice'});
+  });
+
+  it('characterizes the trusted where: an unmatched unknown property yields 404, not an error', async () => {
+    // The where contents are not validated; an unknown property simply does
+    // not match any record.
+    const res = await resolve('bob', {where: {ownerId: 'alice', nope: 'x'}});
+    assert.equal(res.status, 404);
   });
 
   it('no resolver response ever contains access IDs or private document data', async () => {
     // Exercise every outcome class: 200, 403, 404.
     const requests: Array<[string | undefined, unknown]> = [
-      ['alice', {ownerId: 'alice', accessId: 'BLOG'}],
-      ['alice', {ownerId: 'alice', accessId: 'BL%'}],
-      ['alice', {ownerId: 'alice', accessId: '%'}],
-      ['bob', {ownerId: 'alice', accessId: 'B%'}],
-      ['bob', {ownerId: 'alice', accessId: 'BLOG'}],
-      ['bob', {ownerId: 'alice', accessId: 'A%'}],
-      ['bob', {ownerId: 'bob', accessId: 'S%'}],
-      ['alice', {ownerId: 'bob', accessId: 'SAFE'}],
-      ['bob', {ownerId: 'bob', accessId: '%'}],
+      ['alice', likeQuery('alice', 'BLOG')],
+      ['alice', likeQuery('alice', 'BL%')],
+      ['alice', likeQuery('alice', '%')],
+      ['bob', likeQuery('alice', 'B%')],
+      ['bob', likeQuery('alice', 'BLOG')],
+      ['bob', likeQuery('alice', 'A%')],
+      ['bob', likeQuery('bob', 'S%')],
+      ['alice', likeQuery('bob', 'SAFE')],
+      ['bob', likeQuery('bob', '%')],
     ];
     for (const [actor, body] of requests) {
       const res = await resolve(actor, body);
@@ -185,13 +208,13 @@ describe('Vulnerable resolver: oracle behavior', async () => {
   });
 
   it('bare % cannot disclose an actual access ID through the response', async () => {
-    const res = await resolve('bob', {ownerId: 'alice', accessId: '%'});
+    const res = await resolve('bob', likeQuery('alice', '%'));
     assert.equal(res.status, 403);
     const text = await res.text();
     assert.ok(!text.includes(ALICE_ACCESS_ID));
     assert.ok(!text.includes(BOB_ACCESS_ID));
     // And for the owner herself, only the ownerId comes back.
-    const res2 = await resolve('alice', {ownerId: 'alice', accessId: '%'});
+    const res2 = await resolve('alice', likeQuery('alice', '%'));
     assert.equal(res2.status, 200);
     assert.deepEqual(await res2.json(), {ownerId: 'alice'});
   });
@@ -199,12 +222,12 @@ describe('Vulnerable resolver: oracle behavior', async () => {
 
 describe('Vulnerable resolver: request validation (controlled 400)', async () => {
   it('missing X-Demo-User actor yields 400', async () => {
-    const res = await resolve(undefined, {ownerId: 'alice', accessId: 'B%'});
+    const res = await resolve(undefined, likeQuery('alice', 'B%'));
     assert.equal(res.status, 400);
   });
 
   it('invalid X-Demo-User actor yields 400', async () => {
-    const res = await resolve('charlie', {ownerId: 'alice', accessId: 'B%'});
+    const res = await resolve('mallory', likeQuery('alice', 'B%'));
     assert.equal(res.status, 400);
   });
 
@@ -213,41 +236,23 @@ describe('Vulnerable resolver: request validation (controlled 400)', async () =>
     assert.equal(res.status, 400);
   });
 
-  it('missing accessId yields 400', async () => {
-    const res = await resolve('alice', {ownerId: 'alice'});
-    assert.equal(res.status, 400);
+  it('body must contain exactly one top-level "where" property', async () => {
+    // Old `{ownerId, accessId}` shape is no longer the contract.
+    for (const body of [
+      {},
+      {ownerId: 'alice', accessId: 'B%'},
+      {where: {ownerId: 'alice'}, extra: 1},
+    ]) {
+      const res = await resolve('alice', body);
+      assert.equal(res.status, 400, `body ${JSON.stringify(body)} must be rejected`);
+    }
   });
 
-  it('unexpected extra property yields 400', async () => {
-    const res = await resolve('alice', {
-      ownerId: 'alice',
-      accessId: 'B%',
-      extra: 'nope',
-    });
-    assert.equal(res.status, 400);
-  });
-
-  it('non-fixture ownerId yields 400', async () => {
-    const res = await resolve('alice', {ownerId: 'charlie', accessId: 'B%'});
-    assert.equal(res.status, 400);
-  });
-
-  it('empty accessId yields 400', async () => {
-    const res = await resolve('alice', {ownerId: 'alice', accessId: ''});
-    assert.equal(res.status, 400);
-  });
-
-  it('overlong accessId (>32 chars) yields 400', async () => {
-    const res = await resolve('alice', {
-      ownerId: 'alice',
-      accessId: 'B'.repeat(33),
-    });
-    assert.equal(res.status, 400);
-  });
-
-  it('non-string accessId yields 400', async () => {
-    const res = await resolve('alice', {ownerId: 'alice', accessId: 1234});
-    assert.equal(res.status, 400);
+  it('where must be a plain object', async () => {
+    for (const where of ['x', null, [], 'string']) {
+      const res = await resolve('alice', {where});
+      assert.equal(res.status, 400, `where ${JSON.stringify(where)} must be rejected`);
+    }
   });
 });
 

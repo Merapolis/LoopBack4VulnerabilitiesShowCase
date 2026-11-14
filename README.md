@@ -92,24 +92,33 @@ make reproducible testing possible; they are not production credentials.
 
 ```fish
 curl -s -X POST -H "X-Demo-User: bob" -H "Content-Type: application/json" \
-  -d '{"ownerId":"alice","accessId":"BL%"}' \
+  -d '{"where":{"ownerId":"alice","accessId":{"like":"BL%"}}}' \
   http://127.0.0.1:3000/demo/identities/resolve
 ```
 
-The resolver matches the supplied `accessId` against the stored secret using
-the memory connector's `like` wildcard semantics (`%` = any run of
-characters, `_` = exactly one character), and only decides ownership *after*
-the lookup. The response matrix is the oracle:
+The request body is a **whole `where` query supplied by the caller**. The
+application trusts it verbatim and passes it straight to the repository — it
+does **not** inject `ownerId`, choose operators, or restrict which properties
+or operators the query may use. The application was never designed to expose
+wildcards, but `like` is just one of the memory connector's query operators:
+because the caller controls the entire `where`, the caller can add `like`
+(and therefore `%` = any run, `_` = exactly one character) themselves and get
+wildcard matching the application never meant to allow. This is *blind trust
+of caller-supplied query data*, not a server-side wildcard feature.
+
+Ownership is decided only *after* the lookup. The response matrix is the
+oracle:
 
 | Condition | Response |
 |---|---|
-| No identity matches the pattern for the requested owner | `404` `Identity not found` |
+| No identity matches the `where` | `404` `Identity not found` |
 | An identity matches, but the caller fixture actor is not its owner | `403` `Access denied` |
 | An identity matches and the caller is its owner | `200` `{"ownerId":"..."}` |
 
-Short example: `A%` → 404, `B%` → 403, `BL%` → 403. Because `403` means
-"pattern matched the secret" and `404` means "it did not", an attacker can
-reconstruct the secret character by character without ever seeing it.
+Short example (body is `{"where":{"ownerId":"alice","accessId":{"like":"..."}}}`):
+`A%` → 404, `B%` → 403, `BL%` → 403. Because `403` means "matched the secret"
+and `404` means "did not", an attacker can reconstruct the secret character
+by character without ever seeing it.
 
 `X-Demo-User` is only a fixture-actor selector, **not authentication**. No
 resolver response (including 403s) ever contains the access ID itself.
@@ -141,13 +150,17 @@ proxy to intercept, inspect, and replay any of it.
 
 ### Why this is vulnerable
 
-The vulnerability is this application's **combination** of (1) wildcard
-matching applied to a secret, (2) an authorization decision made after the
-match, and (3) differential 403/404 responses. It is **not** a claim that
-wildcard/LIKE support is inherently unsafe — the same connector wildcard
-behavior is harmless in the exact-title document search of the secure
-baseline, where it is not applied to secrets and does not produce a
-differential disclosure signal.
+The application trusts caller-supplied query data. Passing the caller's
+entire `where` to the repository (rather than building a fixed, safe query)
+lets the caller introduce operators such as `like`/`regexp`/`or` that the
+application never intended to expose — so wildcards exist only because of
+this blind trust. The disclosure then comes from the **combination** of
+(1) caller-controlled operators applied to a secret, (2) an authorization
+decision made only after the match, and (3) differential 403/404 responses.
+It is **not** a claim that wildcard/LIKE support is inherently unsafe — the
+safe fix is to never let a caller-shaped query decide which secret is
+located (build the query server-side, and/or decide ownership before
+responding).
 
 ## Scope notes
 

@@ -1,5 +1,7 @@
 import {get, post, param, requestBody, HttpErrors} from '@loopback/rest';
 import {inject} from '@loopback/core';
+import {Where} from '@loopback/repository';
+import {ApiIdentity} from '../models/api-identity.model';
 import {ApiIdentityRepository} from '../repositories/api-identity.repository';
 import {DocumentRepository} from '../repositories/document.repository';
 import {Document} from '../models/document.model';
@@ -11,10 +13,14 @@ import {Document} from '../models/document.model';
  * branch of this lab. It demonstrates an access-ID oracle:
  *
  *   POST /demo/identities/resolve
- *     - passes an attacker-controlled `accessId` pattern (which may contain
- *       the LoopBack memory-connector wildcards `%` and `_`) into a `like`
- *       repository query, and makes the ownership decision only AFTER the
- *       lookup. The resulting 403-vs-404 differential is the oracle.
+ *     - accepts a caller-supplied `where` query and passes it to the
+ *       repository UNCHANGED, then makes the ownership decision only AFTER
+ *       the lookup. The application never intended callers to use wildcards,
+ *       but by trusting the whole `where` object verbatim it hands the caller
+ *       the memory connector's query operators (`like`, `regexp`, `or`, ...).
+ *       A caller who supplies `like` with `%`/`_` therefore gets wildcard
+ *       matching the application never meant to expose, and the resulting
+ *       403-vs-404 differential is the oracle.
  *
  *   GET /demo/users/{ownerId}/documents
  *     - the secure counterpart: exact-equality credential check, then
@@ -36,49 +42,48 @@ export class DemoController {
    * Require a valid fixture actor for the resolver. Missing or invalid
    * `X-Demo-User` values produce a controlled 400 response.
    */
-  private requireDemoUser(actor: string | undefined): 'alice' | 'bob'| 'carol'| 'dave' {
-    if (actor === 'alice' || actor === 'bob' || actor === 'carol' || actor === 'dave' ) return actor;
+  private requireDemoUser(
+    actor: string | undefined,
+  ): 'alice' | 'bob' | 'carol' | 'dave' {
+    if (
+      actor === 'alice' ||
+      actor === 'bob' ||
+      actor === 'carol' ||
+      actor === 'dave'
+    ) {
+      return actor;
+    }
     throw new HttpErrors.BadRequest(
-      'A valid X-Demo-User fixture actor (alice or bob) is required',
+      'A valid X-Demo-User fixture actor (alice, bob, carol or dave) is required',
     );
   }
 
   /**
-   * Strict manual validation of the resolver body. Every malformed request
-   * gets a controlled 400 response. Note that `%` and `_` are intentionally
-   * NOT rejected, escaped, normalized, or stripped from `accessId`: those
-   * wildcard characters are essential to the deliberate flaw demonstrated
-   * on this branch.
+   * Validate only the *shape* of the resolver request: a JSON object whose
+   * single top-level property is a `where` object. The contents of `where`
+   * are deliberately NOT restricted — properties, operators (including
+   * `like`), and nesting are all accepted, because this demo models an
+   * application that blindly trusts the caller's query. Malformed shapes
+   * still produce a controlled 400 response.
    */
-  private validateResolveBody(
-    body: unknown,
-  ): {ownerId: string; accessId: string} {
-    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+  private validateResolveBody(body: unknown): Where<ApiIdentity> {
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       throw new HttpErrors.BadRequest('Request body must be a JSON object');
     }
-    const keys = Object.keys(body).sort();
-    if (keys.length !== 2 || keys[0] !== 'accessId' || keys[1] !== 'ownerId') {
-      throw new HttpErrors.BadRequest(
-        'Request body must contain exactly the properties ownerId and accessId',
-      );
+
+    const keys = Object.keys(body);
+    if (keys.length !== 1 || keys[0] !== 'where') {
+      throw new HttpErrors.BadRequest('Request body must contain only "where"');
     }
-    const record = body as Record<string, unknown>;
-    const {ownerId, accessId} = record;
-    if (ownerId !== 'alice' && ownerId !== 'bob') {
-      throw new HttpErrors.BadRequest(
-        'ownerId must be a fixed fixture identity (alice or bob)',
-      );
+
+    const where = (body as Record<string, unknown>).where;
+    if (where === null || typeof where !== 'object' || Array.isArray(where)) {
+      throw new HttpErrors.BadRequest('"where" must be a plain object');
     }
-    if (
-      typeof accessId !== 'string' ||
-      accessId.length === 0 ||
-      accessId.length > 32
-    ) {
-      throw new HttpErrors.BadRequest(
-        'accessId must be a nonempty string of at most 32 characters',
-      );
-    }
-    return {ownerId, accessId};
+
+    // No property, operator, or nesting restrictions are applied on purpose:
+    // the caller owns the whole query in this demo.
+    return where as Where<ApiIdentity>;
   }
 
   @post('/demo/identities/resolve')
@@ -98,28 +103,26 @@ export class DemoController {
     body: unknown,
   ): Promise<{ownerId: string}> {
     const actor = this.requireDemoUser(demoUser);
-    const {ownerId, accessId} = this.validateResolveBody(body);
+    const where = this.validateResolveBody(body);
 
     // ====================================================================
     // *** INTENTIONALLY VULNERABLE QUERY — DO NOT "FIX" IN CLEANUP ******
     // ====================================================================
-    // The attacker-controlled `accessId` (which may contain the LoopBack
-    // memory-connector wildcards `%` and `_`) is passed directly into a
-    // `like` filter, and the caller's actor identity is deliberately NOT
-    // part of the query's ownership condition. The ownership decision is
-    // made only AFTER this lookup, so an unauthorized match (403) is
-    // distinguishable from no match (404) — the access-ID oracle that
-    // this educational branch exists to demonstrate. The secure refactor
-    // is to avoid wildcard matching on secrets (and/or decide ownership
-    // before responding); applying it here would remove the demo.
-    const identity = await this.apiIdentityRepository.findOne({
-      where: {
-        // Attacker-controlled requested owner, not the caller's actor.
-        ownerId,
-        // Attacker-controlled wildcard pattern.
-        accessId: {like: accessId},
-      },
-    });
+    // The ENTIRE `where` object is supplied by the caller and is passed to
+    // the repository unchanged. The controller does not inject `ownerId`,
+    // does not choose or rewrite operators, and does not constrain which
+    // properties or operators the query may use. Whatever the memory
+    // connector does with `like`, `neq`, `regexp`, `or`, etc. is therefore
+    // directly reachable by the caller.
+    //
+    // The caller's actor identity is deliberately NOT part of the query.
+    // Ownership is decided only AFTER this lookup, so an unauthorized
+    // match (403) is distinguishable from no match (404) — that
+    // difference is the access-ID oracle this branch exists to
+    // demonstrate. The secure refactor is to never let a caller-shaped
+    // query decide which secret is located, and/or to decide ownership
+    // before responding; applying it here would remove the demo.
+    const identity = await this.apiIdentityRepository.findOne({where});
 
     // Ownership decision AFTER the lookup. These two outcomes — generic
     // 404 for "no match" and generic 403 for "match but not your

@@ -170,12 +170,14 @@ button.on {
 <main>
   <section class="card">
     <h2>1 · POST /demo/identities/resolve</h2>
-    <p class="hint">The server matches your <code>accessId</code> pattern against
-       a stored secret. <span class="status s404">404</span> no match ·
-       <span class="status s403">403</span> <b>matched, but it is not your
-       identity</b> · <span class="status s200">200</span> matched and yours.
-       Probing someone else's identity makes the difference between 403 and 404
-       a disclosure signal.</p>
+    <p class="hint">The request body is a <b>whole <code>where</code> query you
+       supply</b>; the server trusts it verbatim and passes it to the database.
+       The app never intended wildcards, but because <code>like</code> is just
+       a query operator, <b>you</b> can add it (<code>%</code> = any run,
+       <code>_</code> = one char) and get wildcard matching. <span
+       class="status s404">404</span> no match ·
+       <span class="status s403">403</span> <b>matched, but not your
+       identity</b> · <span class="status s200">200</span> matched and yours.</p>
     <div class="row">
       <label>Target owner
         <select id="target-owner"><option>alice</option><option>bob</option></select>
@@ -278,7 +280,11 @@ button.on {
   }
 
   function resolverCurl(owner, pattern, act) {
-    var body = JSON.stringify({ownerId: owner, accessId: pattern});
+    // In this demo the CALLER supplies the whole where, including the like
+    // operator — the server trusts it verbatim.
+    var body = JSON.stringify({
+      where: {ownerId: owner, accessId: {like: pattern}},
+    });
 
     return 'curl -sS -i -X POST ' +
       '-H ' + JSON.stringify('X-Demo-User: ' + act) + ' ' +
@@ -334,7 +340,9 @@ button.on {
     fetch(ORIGIN + '/demo/identities/resolve', {
       method: 'POST',
       headers: {'Content-Type': 'application/json', 'X-Demo-User': act},
-      body: JSON.stringify({ownerId: owner, accessId: pattern}),
+      body: JSON.stringify({
+        where: {ownerId: owner, accessId: {like: pattern}},
+      }),
     }).then(function (r) {
       return r.text().then(function (t) { return {s: r.status, t: t}; });
     }).then(function (res) {

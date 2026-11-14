@@ -124,22 +124,27 @@ supplement, and do not replace, the rules above.
 
 ## Demo branch decision (demo/wildcard-oracle)
 
-- The `{like: suppliedPattern}` filter in `DemoController.resolveIdentity`
+- The resolver `DemoController.resolveIdentity`
   (`src/controllers/demo.controller.ts`) is **intentionally vulnerable and
-  must not be removed during routine cleanup** on this branch. It passes an
-  attacker-controlled wildcard pattern (`%`, `_`) into the memory connector's
-  LIKE matching against the stored `accessId`, and the ownership decision is
-  deliberately made only after the lookup, producing the differential
-  403-vs-404 access-ID oracle this educational branch exists to demonstrate.
-  It is present **only** in the resolver; the protected document route
+  must not be changed during routine cleanup** on this branch. It accepts the
+  caller's entire `where` object and passes it to `findOne({where})`
+  unchanged — it does not inject `ownerId`, pick operators, or restrict which
+  properties/operators the query may use. The application never intended to
+  expose wildcards, but because `like` (and `%`/`_`) is just one of the memory
+  connector's operators, the caller can introduce it themselves; blind trust
+  of caller-supplied query data is what makes wildcards reachable. Ownership
+  is deliberately decided only AFTER the lookup, producing the differential
+  403-vs-404 access-ID oracle this branch demonstrates. The vulnerability is
+  present **only** in the resolver; the protected document route
   (`GET /demo/users/{ownerId}/documents`) must keep its exact-equality
-  credential check. The secure refactor (exact matching on secrets, or
-  deciding ownership before responding) belongs to a future, explicitly
-  marked change — not to routine maintenance.
-- The seeded access IDs (`alice → BLOG`, `bob → SAFE`) are fixed educational
-  fixtures, four uppercase letters without repeats; they are synthetic test
-  values, not credentials, and `accessId` is marked `hidden` on the model so
-  serialization never exposes it.
+  credential check. The secure refactor (build a fixed server-side query on
+  the secret, and/or decide ownership before responding) belongs to a future,
+  explicitly marked change — not to routine maintenance.
+- The seeded access IDs (`alice → BLOG`, `bob → SAFE`, `carol → CODE`,
+  `dave → DAVE`) are fixed educational fixtures, four uppercase letters
+  without repeats; they are synthetic test values, not credentials, and
+  `accessId` is marked `hidden` on the model so serialization never exposes
+  it.
 
 - The landing page at `GET /` (`src/controllers/landing.controller.ts`,
   `LandingController`) is demo-branch presentation only: it calls the same HTTP
