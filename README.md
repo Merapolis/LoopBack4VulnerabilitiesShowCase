@@ -118,4 +118,3 @@ merged together; the baseline stays clean.
 - This is a **local test application, not a production template**: the in-memory datasource resets on restart, `X-Demo-User` is not authentication, and the server binds only to `127.0.0.1`.
 - Dependency audit results are a point-in-time check against the committed lockfile, not a guarantee for future installations.
 - The filter semantics described in the demo branches (`like`, `%`, `_`) were characterized against the **in-memory connector** used here. Other LoopBack connectors may interpret the same operator differently.
-```
