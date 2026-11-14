@@ -1,3 +1,11 @@
+> This whole application has been vibe coded.
+
+> **Deliberately vulnerable lab.** This repository is a local training lab.
+> Some branches contain intentional security vulnerabilities for
+> demonstration. Do not deploy it anywhere reachable, and do not copy the
+> vulnerable controllers into real applications. The default branch
+> (`master`) is the clean baseline.
+
 # LoopBack 4 Oracle Lab
 
 A minimal LoopBack 4 + TypeScript application used as a controlled lab for a
@@ -20,6 +28,14 @@ npm start       # run the compiled application
 The server listens on **http://127.0.0.1:3000 only** — it is bound to the
 loopback interface and is not reachable from the network.
 
+Always switch branches *and rebuild* when comparing demos. Compiled output
+from a previous branch otherwise stays in `dist/`:
+
+```sh
+git switch demo/wildcard-oracle
+rm -rf dist && npm run build && npm test
+```
+
 ## Endpoints
 
 | Method | Path                    | Description                                    |
@@ -32,12 +48,16 @@ loopback interface and is not reachable from the network.
 Example requests:
 
 ```sh
-curl http://127.0.0.1:3000/ping
-curl http://127.0.0.1:3000/documents
-curl -H "X-Demo-User: alice" http://127.0.0.1:3000/documents
-curl -H "X-Demo-User: bob" http://127.0.0.1:3000/documents/1
-curl -H "X-Demo-User: alice" "http://127.0.0.1:3000/documents/search?title=Alice%20Private"
+curl -sS http://127.0.0.1:3000/ping
+curl -sS http://127.0.0.1:3000/documents
+curl -sS -H "X-Demo-User: alice" http://127.0.0.1:3000/documents
+curl -sS -H "X-Demo-User: bob" http://127.0.0.1:3000/documents/1
+curl -sS -H "X-Demo-User: alice" "http://127.0.0.1:3000/documents/search?title=Alice%20Private"
 ```
+
+Note: LoopBack publishes `/openapi.json` and `/openapi.yaml` by default. This
+is standard framework behavior, not something added by this lab, and is
+discussed in the accompanying write-up.
 
 ## X-Demo-User is NOT authentication
 
@@ -76,11 +96,26 @@ real records of any kind.
   the same status code, body, and error message. The baseline does not leak
   the existence of documents the actor may not access.
 
+## Where the vulnerability demonstrations live
+
+This branch is the secure baseline and contains no intended vulnerability.
+The deliberately vulnerable demos live on separate branches, each created
+from the `secure-baseline` tag, so the failures can be compared directly
+against this code.
+
+| Branch | Demonstration |
+|---|---|
+| `demo/wildcard-oracle` | caller-supplied query used as an access-ID oracle |
+| `demo/projection-fail-open` | ownership checked on a client-projected record |
+| `demo/profile-field-authorization` | negative projection disclosure + mass assignment |
+
+Each branch is explicitly and intentionally vulnerable on its own, and is
+marked as such in code, tests, and its branch README. They are not meant to be
+merged together; the baseline stays clean.
+
 ## Scope notes
 
-- The intentional **oracle vulnerability demonstration is NOT part of this
-  baseline**. It will be introduced later as an explicitly isolated branch or
-  change; do not expect it here.
-- This is a **local test application, not a production template**: the
-  in-memory datasource resets on restart, `X-Demo-User` is not authentication,
-  and the server binds only to 127.0.0.1.
+- This is a **local test application, not a production template**: the in-memory datasource resets on restart, `X-Demo-User` is not authentication, and the server binds only to `127.0.0.1`.
+- Dependency audit results are a point-in-time check against the committed lockfile, not a guarantee for future installations.
+- The filter semantics described in the demo branches (`like`, `%`, `_`) were characterized against the **in-memory connector** used here. Other LoopBack connectors may interpret the same operator differently.
+```
